@@ -1,0 +1,86 @@
+on:
+  push:
+    branches:
+      - main
+
+name: deploy-rmd
+
+jobs:
+  deploy-rmd:
+    runs-on: ${{ matrix.config.os }}
+
+    name: ${{ matrix.config.os }} (${{ matrix.config.r }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - {os: macOS-latest, r: 'release', bioc: '3.14'}
+
+    env:
+      R_REMOTES_NO_ERRORS_FROM_WARNINGS: true
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v2
+        with:
+          submodules: true
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@master
+        with:
+          r-version: ${{ matrix.config.r }}
+
+      - name: Set up pandoc
+        uses: r-lib/actions/setup-pandoc@master
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install harfbuzz
+          brew install fribidi
+          brew install --cask xquartz
+
+      - name: Install dependencies
+        run: |
+          install.packages(c('remotes', 'BiocManager'), Ncpu = 2L)
+          BiocManager::install(version = "${{ matrix.config.bioc }}", ask = FALSE)
+          BiocManager::install(c('htmltools', 'knitr', 'rmarkdown', 'DT',
+                                 'BiocPkgTools', 'dplyr', 'tidyr', 'ggplot2',
+                                 'igraph', 'ggrepel'))
+        shell: Rscript {0}
+
+      - name: Session info
+        run: |
+          install.packages('sessioninfo')
+          options(width = 100)
+          pkgs <- installed.packages()[, "Package"]
+          sessioninfo::session_info(pkgs, include_base = TRUE)
+        shell: Rscript {0}
+
+      - name: Render site
+        run: |
+          rmarkdown::render(input = "BiocPkgList.Rmd", clean = FALSE)
+        shell: Rscript {0}
+
+      - name: Prepare files to deploy
+        run: |
+          mkdir _site
+          cp -r BiocPkgList.html _site/index.html
+          cp -r BiocPkgList_files _site/
+
+      - name: Deploy 🚀
+        uses: JamesIves/github-pages-deploy-action@releases/v3
+        with:
+          ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: gh-pages
+          FOLDER: _site
+
+      - name: Upload check results
+        if: failure()
+        uses: actions/upload-artifact@master
+        with:
+          name: ${{ runner.os }}-r${{ matrix.config.r }}-results
+          path: check

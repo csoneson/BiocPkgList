@@ -1,0 +1,164 @@
+---
+title: "Bioc package list"
+author: ""
+date: "`r Sys.time()`"
+output:
+  rmarkdown::html_document:
+    highlight: pygments
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    fig_width: 5
+    number_sections: false
+    theme: united
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+suppressPackageStartupMessages({
+    library(DT)
+    library(BiocPkgTools)
+    library(dplyr)
+    library(tidyr)
+    library(igraph)
+    library(ggplot2)
+    library(ggrepel)
+})
+```
+
+# Get list of packages
+
+```{r}
+bpi = biocPkgList()
+```
+
+# Get and summarize download stats
+
+```{r}
+ds <- biocDownloadStats(pkgType = "software")
+ads <- anacondaDownloadStats()
+
+## Total downloads in 2021
+ds <- ds %>%
+    dplyr::filter(Year == 2021) %>%
+    dplyr::group_by(Package) %>%
+    dplyr::summarize(NbDownloadsBioc = sum(Nb_of_downloads))
+ads <- ads %>%
+    dplyr::filter(Year == 2021) %>%
+    dplyr::group_by(Package) %>%
+    dplyr::summarize(NbDownloadsConda = sum(Nb_of_downloads))
+```
+
+# Find dependencies among packages
+
+```{r}
+## Build package dependency graph
+depdf <- BiocPkgTools::buildPkgDependencyDataFrame(
+    repo = c("BioCsoft", "CRAN"),
+    dependencies = c("Depends", "Imports")
+)
+g = BiocPkgTools::buildPkgDependencyIgraph(depdf)
+
+## Get all packages
+pkgs <- setdiff(names(igraph::V(g)), "")
+
+## Initialize dependency matrix
+## Package in row depends on packages in columns
+depmat <- matrix(0, nrow = length(pkgs), ncol = length(pkgs))
+rownames(depmat) <- colnames(depmat) <- pkgs
+
+## Find dependencies
+for (p in pkgs) {
+    sc <- igraph::subcomponent(g, p, mode = "out")
+    depmat[p, setdiff(names(sc), "")] <- 1
+}
+
+## Subset dependency matrix to Bioc packages
+bps = bpi$Package
+bps <- intersect(bps, pkgs)
+depmat_bioc <- depmat[bps, bps]
+
+## Column sums ("how many packages depend - directly or indirectly - 
+## on a given package")
+cs <- colSums(depmat_bioc)
+```
+
+# Make summary table
+
+```{r}
+bpisub <- bpi %>% 
+    dplyr::select(Package, hasNEWS, VignetteBuilder, BugReports, 
+                  PackageStatus, Maintainer, dependencyCount) %>%
+    dplyr::left_join(ds, by = "Package") %>%
+    dplyr::left_join(ads, by = "Package") %>%
+    dplyr::mutate(NbDownloadsConda = tidyr::replace_na(NbDownloadsConda, 0))
+
+## Remove the package itself from the downstream dependencies
+bpisub$nb_dependent_pkgs <- cs[bpisub$Package] - 1
+
+## Get download counts for downstream dependencies
+diag(depmat_bioc) <- 0
+NbDownloadsBiocDepPkgs <- (rbind(bpisub$NbDownloadsBioc[match(
+    rownames(depmat_bioc), bpisub$Package)]) %*% depmat_bioc)[1, ]
+NbDownloadsCondaDepPkgs <- (rbind(bpisub$NbDownloadsConda[match(
+    rownames(depmat_bioc), bpisub$Package)]) %*% depmat_bioc)[1, ]
+
+bpisub$NbDownloadsBiocDepPkgs <-
+    NbDownloadsBiocDepPkgs[bpisub$Package]
+bpisub$NbDownloadsCondaDepPkgs <- 
+    NbDownloadsCondaDepPkgs[bpisub$Package]
+
+bpisub <- bpisub %>%
+    dplyr::mutate(NbDownloadsBiocConda = NbDownloadsBioc + 
+                      NbDownloadsConda,
+                  NbDownloadsBiocCondaDepPkgs =
+                      NbDownloadsBiocDepPkgs + 
+                      NbDownloadsCondaDepPkgs)
+
+bpisub <- as.data.frame(bpisub)
+
+DT::datatable(bpisub %>% dplyr::arrange(desc(NbDownloadsBiocConda)), 
+              extensions = "FixedColumns",
+              options = list(scrollX = TRUE, fixedColumns = list(leftColumns = 2), 
+                             pageLength = 25))
+```
+
+# Plots
+
+```{r, fig.width = 8, fig.height = 7}
+ggplot(bpisub, aes(x = NbDownloadsBioc, y = NbDownloadsConda)) + 
+    geom_point(size = 3, alpha = 0.5) + theme_bw() + 
+    geom_text_repel(
+        data = bpisub %>% 
+            dplyr::filter(
+                (NbDownloadsBioc > 750000 & NbDownloadsConda < 50000) |
+                    (NbDownloadsBioc < 500000 & NbDownloadsConda > 100000)),
+        aes(label = Package), max.overlaps = Inf, size = 4,
+        min.segment.length = 0.1)
+
+ggplot(bpisub, aes(x = NbDownloadsBiocConda,
+                   y = NbDownloadsBiocCondaDepPkgs)) + 
+    geom_point(size = 3, alpha = 0.5) + theme_bw() + 
+    geom_text_repel(
+        data = bpisub %>% 
+            dplyr::filter(
+                (NbDownloadsBiocConda > 750000) |
+                    (NbDownloadsBiocConda < 500000 &
+                         NbDownloadsBiocCondaDepPkgs > 5000000) | 
+                    (NbDownloadsBiocConda < 250000 &
+                         NbDownloadsBiocCondaDepPkgs > 3000000)), 
+        aes(label = Package), max.overlaps = Inf, size = 4,
+        min.segment.length = 0.1)
+```
+
+# Session info
+
+```{r}
+sessionInfo()
+```
+
