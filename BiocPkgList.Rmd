@@ -6,7 +6,7 @@ output:
   rmarkdown::html_document:
     highlight: pygments
     toc: true
-    toc_float: true
+    toc_float: false
     toc_depth: 3
     fig_width: 5
     number_sections: false
@@ -96,10 +96,12 @@ bpisub <- bpi %>%
                   PackageStatus, Maintainer, dependencyCount) %>%
     dplyr::left_join(ds, by = "Package") %>%
     dplyr::left_join(ads, by = "Package") %>%
-    dplyr::mutate(NbDownloadsConda = tidyr::replace_na(NbDownloadsConda, 0))
+    dplyr::mutate(NbDownloadsConda = tidyr::replace_na(NbDownloadsConda, 0)) %>%
+    dplyr::mutate(NbDownloadsBiocConda = NbDownloadsBioc + 
+                      NbDownloadsConda)
 
 ## Remove the package itself from the downstream dependencies
-bpisub$nb_dependent_pkgs <- cs[bpisub$Package] - 1
+bpisub$nbDependentPkgs <- cs[bpisub$Package] - 1
 
 ## Get download counts for downstream dependencies
 diag(depmat_bioc) <- 0
@@ -114,9 +116,7 @@ bpisub$NbDownloadsCondaDepPkgs <-
     NbDownloadsCondaDepPkgs[bpisub$Package]
 
 bpisub <- bpisub %>%
-    dplyr::mutate(NbDownloadsBiocConda = NbDownloadsBioc + 
-                      NbDownloadsConda,
-                  NbDownloadsBiocCondaDepPkgs =
+    dplyr::mutate(NbDownloadsBiocCondaDepPkgs =
                       NbDownloadsBiocDepPkgs + 
                       NbDownloadsCondaDepPkgs)
 
