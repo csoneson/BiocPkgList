@@ -34,7 +34,7 @@ suppressPackageStartupMessages({
 # Get list of packages
 
 ```{r}
-bpi = biocPkgList()
+bpi <- biocPkgList()
 ```
 
 # Get and summarize download stats
@@ -43,13 +43,13 @@ bpi = biocPkgList()
 ds <- biocDownloadStats(pkgType = "software")
 ads <- anacondaDownloadStats()
 
-## Total downloads in 2021
+## Total downloads in 2022
 ds <- ds %>%
-    dplyr::filter(Year == 2021) %>%
+    dplyr::filter(Year == 2022) %>%
     dplyr::group_by(Package) %>%
     dplyr::summarize(NbDownloadsBioc = sum(Nb_of_downloads))
 ads <- ads %>%
-    dplyr::filter(Year == 2021) %>%
+    dplyr::filter(Year == 2022) %>%
     dplyr::group_by(Package) %>%
     dplyr::summarize(NbDownloadsConda = sum(Nb_of_downloads))
 ```
@@ -62,7 +62,7 @@ depdf <- BiocPkgTools::buildPkgDependencyDataFrame(
     repo = c("BioCsoft", "CRAN"),
     dependencies = c("Depends", "Imports")
 )
-g = BiocPkgTools::buildPkgDependencyIgraph(depdf)
+g <- BiocPkgTools::buildPkgDependencyIgraph(depdf)
 
 ## Get all packages
 pkgs <- setdiff(names(igraph::V(g)), "")
@@ -79,13 +79,20 @@ for (p in pkgs) {
 }
 
 ## Subset dependency matrix to Bioc packages
-bps = bpi$Package
+bps <- bpi$Package
 bps <- intersect(bps, pkgs)
 depmat_bioc <- depmat[bps, bps]
 
 ## Column sums ("how many packages depend - directly or indirectly - 
 ## on a given package")
 cs <- colSums(depmat_bioc)
+
+## Number of direct reverse dependencies
+drevdeps <- igraph::ego(g, nodes = V(g), order = 1, mode = "in")
+drevdeps <- lapply(drevdeps, function(w) intersect(names(w), bps))
+drevdeps <- vapply(drevdeps, length, 0) - 1
+names(drevdeps) <- names(V(g))
+drevdeps <- drevdeps[bps]
 ```
 
 # Make summary table
@@ -101,7 +108,8 @@ bpisub <- bpi %>%
                       NbDownloadsConda)
 
 ## Remove the package itself from the downstream dependencies
-bpisub$nbDependentPkgs <- cs[bpisub$Package] - 1
+bpisub$NbDependentPkgs <- cs[bpisub$Package] - 1
+bpisub$NbDirDependentPkgs <- drevdeps[bpisub$Package]
 
 ## Get download counts for downstream dependencies
 diag(depmat_bioc) <- 0
@@ -152,6 +160,17 @@ ggplot(bpisub, aes(x = NbDownloadsBiocConda,
                          NbDownloadsBiocCondaDepPkgs > 5000000) | 
                     (NbDownloadsBiocConda < 250000 &
                          NbDownloadsBiocCondaDepPkgs > 3000000)), 
+        aes(label = Package), max.overlaps = Inf, size = 4,
+        min.segment.length = 0.1)
+
+ggplot(bpisub, aes(x = NbDirDependentPkgs, y = NbDependentPkgs)) + 
+    geom_point(size = 3, alpha = 0.5) + theme_bw() + 
+    geom_text_repel(
+        data = bpisub %>% 
+            dplyr::filter(
+                (NbDirDependentPkgs > 400) |
+                    (NbDirDependentPkgs < 100 &
+                         NbDependentPkgs > 500)), 
         aes(label = Package), max.overlaps = Inf, size = 4,
         min.segment.length = 0.1)
 ```
